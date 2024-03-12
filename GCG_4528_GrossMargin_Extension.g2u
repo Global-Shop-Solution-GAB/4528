@@ -1,0 +1,502 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Select date range")
+Gui.Form..Size(4800,3540)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.dtpBegDate.Create(DatePicker)
+Gui.Form.dtpBegDate.Size(1935,285)
+Gui.Form.dtpBegDate.Position(270,585)
+Gui.Form.cmdSelect.Create(Button)
+Gui.Form.cmdSelect.Size(855,375)
+Gui.Form.cmdSelect.Position(270,2430)
+Gui.Form.cmdSelect.Caption("Select")
+Gui.Form.cmdSelect.Event(Click,cmdSelect_Click)
+Gui.Form.dtpEndDate.Create(DatePicker)
+Gui.Form.dtpEndDate.Size(1935,285)
+Gui.Form.dtpEndDate.Position(2370,585)
+Gui.Form.lbl1.Create(Label,"Sales date range",True,1935,255,0,270,330,True,0,"Arial",8,-2147483633,0)
+Gui.Form.lbl2.Create(Label,"Work Order date range",True,1935,255,0,270,1620,True,0,"Arial",8,-2147483633,0)
+Gui.Form.dtpWOBegDate.Create(DatePicker)
+Gui.Form.dtpWOBegDate.Size(1935,285)
+Gui.Form.dtpWOBegDate.Position(270,1875)
+Gui.Form.dtpWOEndDate.Create(DatePicker)
+Gui.Form.dtpWOEndDate.Size(1935,285)
+Gui.Form.dtpWOEndDate.Position(2370,1875)
+Gui.Form.chkSameRange.Create(CheckBox)
+Gui.Form.chkSameRange.Size(2940,360)
+Gui.Form.chkSameRange.Position(270,1125)
+Gui.Form.chkSameRange.Caption("With WO of the same date range")
+Gui.Form.chkSameRange.Event(Click,chkSameRange_Click)
+Gui.Form2..Create
+Gui.Form2..Size(15360,10695)
+Gui.Form2..MinX(0)
+Gui.Form2..MinY(0)
+Gui.Form2..Position(0,0)
+Gui.Form2..BackColor(-2147483633)
+Gui.Form2..MousePointer(0)
+Gui.Form2..Event(UnLoad,Form2_UnLoad)
+Gui.Form2.txtParts.Create(TextBoxR)
+Gui.Form2.txtParts.Size(14430,9555)
+Gui.Form2.txtParts.Position(375,300)
+Gui.Progress..Create
+Gui.Progress..Caption("Progress")
+Gui.Progress..Size(9300,1440)
+Gui.Progress..MinX(0)
+Gui.Progress..MinY(0)
+Gui.Progress..Position(0,0)
+Gui.Progress..BackColor(-2147483633)
+Gui.Progress..MousePointer(0)
+Gui.Progress..Event(UnLoad,Progress_UnLoad)
+Gui.Progress.Bar.Create(ProgressBar)
+Gui.Progress.Bar.Size(8670,255)
+Gui.Progress.Bar.Position(180,315)
+Gui.Progress.lblStatus.Create(Label,"Status",True,1935,255,0,180,705,True,0,"Arial",8,-2147483633,0)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+v.Global..BulkDeclareString( sBegDate, sEndDate, sWOBegDate, sWOEndDate, sPartOutOfRangeBefore, sPartOutOfRangeAfter)
+v.Global..BulkDeclareLong(iBIRunID,iBILogID)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN May 26, 2017
+'This program creates report of Sales and Actual Cost for specific date ranges. Sales data is picked from V_ORDER_HIST_LINE where qty_shipped > 0, and Cost data is picked from v_job_header where qty_completed > 0
+'and in v_job_operations
+'The two date ranges of Invoices and Work Orders are not neccessary the same.
+'May 26 added: for part that does not have WO closed in the specific date range, pick the latest WO
+
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+gui.Form..Show
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4528_GrossMargin.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Main.End
+
+Program.Sub.cmdSelect_Click.Start
+f.Intrinsic.String.Format(v.Screen.Form!dtpBegDate.Value,"YYYY-MM-DD",v.Global.sBegDate)
+f.Intrinsic.String.Format(v.Screen.Form!dtpEndDate.Value,"YYYY-MM-DD",v.Global.sEndDate)
+f.Intrinsic.String.Format(v.Screen.Form!dtpWOBegDate.Value,"YYYY-MM-DD",v.Global.sWOBegDate)
+f.Intrinsic.String.Format(v.Screen.Form!dtpWOEndDate.Value,"YYYY-MM-DD",v.Global.sWOEndDate)
+f.Intrinsic.Control.If(v.Screen.Form!chkSameRange.Value,=,1)
+	v.Global.sWOBegDate.Set(v.Global.sBegDate)
+	v.Global.sWOEndDate.Set(v.Global.sEndDate)
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.CallSub(pre_proc)
+Program.Sub.cmdSelect_Click.End
+
+Program.Sub.Pre_Proc.Start
+F.Intrinsic.Control.SetErrorHandler("Pre_Proc_Err")
+F.Intrinsic.Control.ClearErrors
+
+gui.Form..Visible(False)
+Gui.Progress.Bar.Min(0)
+Gui.Progress.Bar.Max(10)
+Gui.Progress.Bar.Value(1)
+Gui.Progress.lblStatus.Text("...collecting Gross Sales data")
+gui.Progress..Show
+
+v.Local..BulkDeclareString(sError, sSQL, sMap, sPart, sFilter, sParam, sVal, sJobSuffix, sJob, sSuffix, sDictJobSuffixVariance, sVariances, sEstimated_Actual, sDistinctPartList, sPartListPool)
+v.Local..BulkDeclareLong(iIncrement, iCounter, iDataViewCounter, iRptID, iCntBefore, iCntAfter)
+v.Local..BulkDeclareFloat(fSalesDollars, fSalesUnits, fAvgPrice)
+
+
+F.ODBC.Connection!con.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+
+'=============================================================================GROSS_SALES SIDE===================================================================================================================
+'Create GrossSales_DT
+v.Local.sSQL.Set("Select o.Customer, Name_customer as Customer_Name, Part, Location, Description, Qty_Shipped * Price_Discount as Sales_Dollars,  Price_discount as Sales_Unit_Price, Qty_Shipped as Sales_Units  ")
+ f.Intrinsic.String.Build("{0} {1} ",v.Local.sSQL," FROM V_ORDER_HIST_LINE o ", v.Local.sSQL)
+ f.Intrinsic.String.Build("{0} {1} ",v.Local.sSQL," join V_Customer_Master c on o.customer = c.customer ", v.Local.sSQL)
+ f.Intrinsic.String.Build("{0} {1} '{2}' and '{3}' ",v.Local.sSQL," where c.Rec = '1' and date_invoice between ", v.Global.sBegDate, v.Global.sEndDate, v.Local.sSQL)
+ f.Intrinsic.String.Build("{0} {1} ",v.Local.sSQL," and Part not like 'FREIGHT%' and Part != 'TOOLING' and Part != 'SCRAP' and Part != 'SCRAP-LEADED' and Part != 'SAMPLE' and Part != 'MISC' ", v.Local.sSQL)
+
+f.Data.DataTable.CreateFromSQL("GrossSales_DT","con",v.Local.sSQL,true)
+
+Gui.Progress.Bar.Value(2)
+Gui.Progress.lblStatus.Text("...saving Gross Sales data")
+'Save to DB
+'AutoNum@!@AutoNum*!*
+v.Local.sMap.Set("Customer@!@Customer*!*Customer_Name@!@Customer_Name*!*PART@!@PART*!*Location@!@Location*!*DESCRIPTION@!@DESCRIPTION")
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Sales_Dollars@!@Sales_Dollars*!*Sales_Units@!@Sales_Units*!*Sales_Unit_Price@!@Sales_Unit_Price", v.Local.sMap)
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_GrossSales")
+Function.Data.DataTable.SaveToDB("GrossSales_DT", "con", "GCG_4528_GrossSales", "",128, v.Local.sMap)
+f.Data.DataTable.Close("GrossSales_DT")
+
+'Group Customer, Part, Description then calculate Avg_Price
+v.Local.sSQL.Set("select Customer, Customer_Name,Part,Location, Description,  sum(Sales_Dollars) as Sales_Dollars, sum(Sales_Units) as Sales_Units")
+f.Intrinsic.String.Build("{0} {1} ",v.Local.sSQL," from GCG_4528_GrossSales ", v.Local.sSQL)
+f.Intrinsic.String.Build("{0} {1} ",v.Local.sSQL," group by Customer, Customer_Name,Part, Description, Location ", v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("GrossSales_DT","con",v.Local.sSQL,true)
+'
+Gui.Progress.Bar.Value(3)
+Gui.Progress.lblStatus.Text("...calculating Average Sales Price")
+'Save to DB
+'AutoNum@!@AutoNum*!*
+v.Local.sMap.Set("Customer@!@Customer*!*Customer_Name@!@Customer_Name*!*PART@!@PART*!*Location@!@Location*!*DESCRIPTION@!@DESCRIPTION")
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Sales_Dollars@!@Sales_Dollars*!*Sales_Units@!@Sales_Units", v.Local.sMap)
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_GrossSales")
+Function.Data.DataTable.SaveToDB("GrossSales_DT", "con", "GCG_4528_GrossSales", "",128, v.Local.sMap)
+f.Data.DataTable.Close("GrossSales_DT")
+f.ODBC.Connection!con.Execute("Update GCG_4528_GrossSales set Avg_Price = Sales_Dollars/Sales_Units where Sales_Units != 0")
+
+'Group by part, location ,Description, calculate sum(Sales_dollars, sales_units)
+v.Local.sSQL.Set("select Part,Location, Description, sum(Sales_Dollars) as Sales_Dollars, sum(Sales_Units) as Sales_Units from gcg_4528_GrossSales group by part, location ,Description")
+f.Data.DataTable.CreateFromSQL("SalesByPart_DT","con",v.Local.sSQL,true)
+'
+v.Local.sMap.Set("PART@!@PART*!*Location@!@Location*!*DESCRIPTION@!@DESCRIPTION")
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Sales_Dollars@!@Sales_Dollars*!*Sales_Units@!@Sales_Units", v.Local.sMap)
+
+Gui.Progress.Bar.Value(4)
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_SalesByPart")
+Function.Data.DataTable.SaveToDB("SalesByPart_DT", "con", "GCG_4528_SalesByPart", "",128, v.Local.sMap)
+f.ODBC.Connection!con.Execute("Update GCG_4528_SalesByPart set Avg_Price = Sales_Dollars / Sales_Units where Sales_Units != 0")
+f.Data.DataTable.Close("SalesByPart_DT")
+
+'=============================================================================COST SIDE===================================================================================================================
+f.ODBC.Connection!con.ExecuteAndReturn("select distinct Part from GCG_4528_GrossSales",v.Local.sDistinctPartList)
+f.Intrinsic.String.Replace(v.Local.sDistinctPartList,"*!*","",v.Local.sDistinctPartList)
+f.Intrinsic.String.Split(v.Local.sDistinctPartList.Trim,"#$#",v.Local.sDistinctPartList)
+
+f.Intrinsic.Control.For(v.Local.iCounter,0,v.Local.sDistinctPartList.UBound,1)
+	F.Intrinsic.Control.If(V.Local.iCounter,=,0)
+		f.Intrinsic.String.Build("'{0}'",v.Local.sDistinctPartList(V.Local.iCounter).Trim, v.Local.sPartListPool)
+	F.Intrinsic.Control.Else	
+		f.Intrinsic.String.Build("{0},'{1}'",v.Local.sPartListPool,v.Local.sDistinctPartList(v.Local.iCounter).Trim, v.Local.sPartListPool)
+	F.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Next(v.Local.iCounter)
+
+Gui.Progress.Bar.Value(5)
+Gui.Progress.lblStatus.Text("...collecting Cost")
+
+'Cost_Active_DT
+v.Local.sSQL.Set("select job, suffix, job+suffix as job_suffix, part, location, qty_completed as Units_Produced, qty_order as Units_Order from v_job_header")
+f.Intrinsic.String.Build("{0} {1} '{2}' and '{3}' ",v.Local.sSQL," where qty_completed > 0 and date_closed between ",v.Global.sWOBegDate, v.Global.sWOEndDate ,v.Local.sSQL)
+f.Intrinsic.String.Build("{0} and part in ({1}) ",v.Local.sSQL,v.Local.sPartListPool,v.Local.sSQL)
+
+f.Data.DataTable.CreateFromSQL("Cost_Active_DT","con",v.Local.sSQL,true)
+
+'Added May 24, 2017 For parts that does not has WO in the range, select the most recent closed WO of that Part
+v.Local.iCnt.Declare(long)
+v.Local..BulkDeclareString(sPartFilled)
+
+f.Intrinsic.String.Build("Select distinct part from V_job_header where qty_completed > 0 and part in ({0}) and date_closed between '{1}' and '{2}'",v.Local.sPartListPool,v.Global.sWOBegDate, v.Global.sWOEndDate ,v.Local.sSQL)
+F.ODBC.Connection!con.OpenLocalRecordsetRO("rst",V.Local.sSQL)
+F.Intrinsic.Control.DoUntil(V.ODBC.con!rst.EOF,=,True)
+	f.Intrinsic.Math.Add(v.Local.iCnt,1,v.Local.iCnt)
+	f.Intrinsic.Control.If(v.Local.iCnt,=,1)
+		f.Intrinsic.String.Concat("'",v.ODBC.con!rst.FieldValTrim!PART,"'",v.Local.sPartFilled)
+	f.Intrinsic.Control.Else
+		f.Intrinsic.String.Concat(v.Local.sPartFilled,",'",v.ODBC.con!rst.FieldValTrim!PART,"'",v.Local.sPartFilled)
+	f.Intrinsic.Control.EndIf	
+	Function.ODBC.con!rst.Movenext
+f.Intrinsic.Control.Loop
+f.ODBC.con!rst.Close
+
+v.Local.sPartNotInClause.Declare(string)
+f.Intrinsic.Control.If(v.Local.sPartFilled,<>,"")
+	f.Intrinsic.String.Build(" and part not in ({0})",v.Local.sPartFilled,v.Local.sPartNotInClause)
+f.Intrinsic.Control.Else
+	v.Local.sPartNotInClause.Set("")
+f.Intrinsic.Control.EndIf
+	
+f.Intrinsic.String.Build("Select distinct part from V_Job_header where qty_completed > 0 and part in ({0}) {1}",v.Local.sPartListPool,v.Local.sPartNotInClause,v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("Part_Empty","con",v.Local.sSQL,true)
+f.Data.DataTable.AddColumn("Part_Empty","Before_Or_After","String","")
+f.Intrinsic.Control.For(v.Local.iCnt,0,v.DataTable.Part_Empty.RowCount--,1)
+	f.Intrinsic.String.Build("Select Top 1 job, suffix, job+suffix as job_suffix, part, location, qty_completed as Units_Produced, qty_order as Units_Order from v_job_header where part = '{0}' and qty_completed > 0 and date_closed < '{1}' order by date_closed desc",Variable.DataTable.Part_Empty(v.Local.iCnt).Part!FieldValString,v.Global.sBegDate,v.Local.sSQL)
+	F.ODBC.Connection!con.OpenLocalRecordsetRO("rst",V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.con!rst.EOF,<>,True)
+		f.Data.DataTable.AddRow("Cost_Active_DT","job",v.ODBC.con!rst.FieldValTrim!Job, "suffix",v.ODBC.con!rst.FieldValTrim!Suffix, "job_suffix",v.ODBC.con!rst.FieldValTrim!Job_Suffix, "part",v.ODBC.con!rst.FieldValTrim!PART, "location",v.ODBC.con!rst.FieldValTrim!Location, "Units_Produced",v.ODBC.con!rst.FieldValTrim!Units_Produced, "Units_Order",v.ODBC.con!rst.FieldValTrim!Units_Order)
+		f.Data.DataTable.SetValue("Part_Empty",v.Local.iCnt,"Before_Or_After","B")
+		f.ODBC.con!rst.Close
+	f.Intrinsic.Control.Else
+		f.ODBC.con!rst.Close
+		f.Intrinsic.String.Build("Select Top 1 job, suffix, job+suffix as job_suffix, part, location, qty_completed as Units_Produced, qty_order as Units_Order from v_job_header where part = '{0}' and qty_completed > 0 and date_closed > '{1}' order by date_closed asc",Variable.DataTable.Part_Empty(v.Local.iCnt).Part!FieldValString,v.Global.sEndDate,v.Local.sSQL)
+		F.ODBC.Connection!con.OpenLocalRecordsetRO("rst",V.Local.sSQL)				
+		F.Intrinsic.Control.If(V.ODBC.con!rst.EOF,<>,True)
+			f.Data.DataTable.AddRow("Cost_Active_DT","job",v.ODBC.con!rst.FieldValTrim!Job, "suffix",v.ODBC.con!rst.FieldValTrim!Suffix, "job_suffix",v.ODBC.con!rst.FieldValTrim!Job_Suffix, "part",v.ODBC.con!rst.FieldValTrim!PART, "location",v.ODBC.con!rst.FieldValTrim!Location, "Units_Produced",v.ODBC.con!rst.FieldValTrim!Units_Produced, "Units_Order",v.ODBC.con!rst.FieldValTrim!Units_Order)
+			f.Data.DataTable.SetValue("Part_Empty",v.Local.iCnt,"Before_Or_After","A")
+		f.Intrinsic.Control.Endif		
+		f.ODBC.con!rst.Close
+	f.Intrinsic.Control.EndIf
+	
+	'Build the sPartOutOfRangeBefore and sPartOutOfRangeAfter to Update later in combine section
+	f.Intrinsic.Control.If(v.DataTable.Part_Empty(v.Local.iCnt).Before_Or_After!FieldValTrim,=,"B")
+		F.Intrinsic.Control.If(V.Local.iCntBefore,=,0)
+			f.Intrinsic.String.Concat("'",Variable.DataTable.Part_Empty(v.Local.iCnt).Part!FieldValString,"'",v.Global.sPartOutOfRangeBefore)
+		F.Intrinsic.Control.Else
+			f.Intrinsic.String.Concat(v.Global.sPartOutOfRangeBefore,",'",Variable.DataTable.Part_Empty(v.Local.iCnt).Part!FieldValString,"'",v.Global.sPartOutOfRangeBefore)
+		F.Intrinsic.Control.EndIf		
+		f.Intrinsic.Math.Add(v.Local.iCntBefore,1,v.Local.iCntBefore)
+	f.Intrinsic.Control.ElseIf(v.DataTable.Part_Empty(v.Local.iCnt).Before_Or_After!FieldValTrim,=,"A")
+		F.Intrinsic.Control.If(V.Local.iCntAfter,=,0)
+			f.Intrinsic.String.Concat("'",Variable.DataTable.Part_Empty(v.Local.iCnt).Part!FieldValString,"'",v.Global.sPartOutOfRangeAfter)
+		F.Intrinsic.Control.Else
+			f.Intrinsic.String.Concat(v.Global.sPartOutOfRangeAfter,",'",Variable.DataTable.Part_Empty(v.Local.iCnt).Part!FieldValString,"'",v.Global.sPartOutOfRangeAfter)
+		F.Intrinsic.Control.EndIf
+		f.Intrinsic.Math.Add(v.Local.iCntAfter,1,v.Local.iCntAfter)
+	f.Intrinsic.Control.EndIf	
+
+f.Intrinsic.Control.Next(v.Local.iCnt)
+
+Gui.Progress.Bar.Value(6)
+Gui.Progress.lblStatus.Text("...filling in latest work orders out of date range")
+
+'ESTIMATED COST
+Function.Data.DataTable.AddColumn("Cost_Active_DT", "Std_Cost_Before", "float", 0)
+'ACTUAL COST
+Function.Data.DataTable.AddColumn("Cost_Active_DT", "Mfg_Orders_Net_Cost", "float", 0)
+
+f.Intrinsic.Control.For(v.Local.iCounter,0,v.DataTable.Cost_Active_DT.RowCount--,1)
+	
+	v.Local.sSQL.Set("select sum(DOLLARS_ESTIMATED)  ,  sum(DOLLARS_ACTUAL)")
+	f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," from V_JOB_Operations ",v.Local.sSQL)
+	f.Intrinsic.String.Build(" {0} where job = '{1}' and suffix = '{2}' and LMO != 'Z' ",v.Local.sSQL, Variable.DataTable.Cost_Active_DT(v.Local.iCounter).Job!FieldValString,Variable.DataTable.Cost_Active_DT(v.Local.iCounter).Suffix!FieldValString,v.Local.sSQL)
+	f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," group by job, suffix ",v.Local.sSQL)
+	f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sEstimated_Actual)	
+	f.Intrinsic.String.Split(v.Local.sEstimated_Actual,"*!*",v.Local.sEstimated_Actual)
+	f.Intrinsic.Control.If(v.Local.sEstimated_Actual,<>,"")
+		f.Intrinsic.Control.If(v.Local.sEstimated_Actual(0),<>,"",and,v.Local.sEstimated_Actual(1),<>,"")
+			Function.Data.DataTable.SetValue("Cost_Active_DT", v.Local.iCounter,"Std_Cost_Before", v.Local.sEstimated_Actual(0))
+			Function.Data.DataTable.SetValue("Cost_Active_DT", v.Local.iCounter,"Mfg_Orders_Net_Cost", v.Local.sEstimated_Actual(1))
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.EndIf
+	
+f.Intrinsic.Control.Next(v.Local.iCounter)
+
+v.Local.sMap.Set("job@!@job*!*suffix@!@suffix*!*job_suffix@!@job_suffix*!*Part@!@Part*!*Location@!@Location*!*Std_Cost_Before@!@Std_Cost_Before*!*Mfg_Orders_Net_Cost@!@Mfg_Orders_Net_Cost*!*Units_Produced@!@Units_Produced*!*Units_Order@!@Units_Order")
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_Cost_Active")
+Function.Data.DataTable.SaveToDB("Cost_Active_DT", "con", "GCG_4528_Cost_Active", "",128, v.Local.sMap)
+Function.Data.DataTable.Clone("Cost_Active_DT", "Cost_Hist_DT", true)
+f.Data.DataTable.Close("Cost_Active_DT")
+
+'F.Intrinsic.Debug.InvokeDebugger
+
+F.Intrinsic.Debug.Stop
+
+'Search Part in PartListPool but not in sPartFilled and not in Part_Empty (sPartOutOfRangeBefore + sPartOutOfRangeAfter)
+v.Local.sPartNotHist.Declare(string)
+v.Local.sPartHistRange.Declare(string)
+f.Intrinsic.String.Concat(v.Local.sPartFilled,",",v.Global.sPartOutOfRangeBefore,",",v.Global.sPartOutOfRangeAfter,v.Local.sPartNotHist)
+f.Intrinsic.String.Build("Select distinct part from V_Job_Hist_Mast where qty_completed > 0 and part in ({0}) and part not in ({1})",v.Local.sPartListPool,v.Local.sPartNotHist,v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("Part_Hist","con",v.Local.sSQL,true)
+f.Intrinsic.Control.For(v.Local.iCnt,0,v.DataTable.Part_Hist.RowCount--,1)
+	f.Intrinsic.String.Build("Select Top 1 job, suffix, job+suffix as job_suffix, part, location, qty_completed as Units_Produced, qty_order as Units_Order from v_Job_Hist_Mast where part = '{0}' and qty_completed > 0 order by date_closed desc",Variable.DataTable.Part_Hist(v.Local.iCnt).Part!FieldValString, v.Local.sSQL)
+	F.ODBC.Connection!con.OpenLocalRecordsetRO("rst",V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.con!rst.EOF,<>,True)
+		f.Data.DataTable.AddRow("Cost_Hist_DT","job",v.ODBC.con!rst.FieldValTrim!Job, "suffix",v.ODBC.con!rst.FieldValTrim!Suffix, "job_suffix",v.ODBC.con!rst.FieldValTrim!Job_Suffix, "part",v.ODBC.con!rst.FieldValTrim!PART, "location",v.ODBC.con!rst.FieldValTrim!Location, "Units_Produced",v.ODBC.con!rst.FieldValTrim!Units_Produced, "Units_Order",v.ODBC.con!rst.FieldValTrim!Units_Order)
+	f.Intrinsic.Control.EndIf
+	f.ODBC.con!rst.Close
+		
+	'Build the sPartHistRange to Update later in combine section	
+	F.Intrinsic.Control.If(V.Local.iCnt,=,0)
+		f.Intrinsic.String.Concat("'",Variable.DataTable.Part_Hist(v.Local.iCnt).Part!FieldValString,"'",v.Local.sPartHistRange)
+	F.Intrinsic.Control.Else
+		f.Intrinsic.String.Concat(v.Local.sPartHistRange,",'",Variable.DataTable.Part_Hist(v.Local.iCnt).Part!FieldValString,"'",v.Local.sPartHistRange)
+	F.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.Next(v.Local.iCnt)
+
+f.Intrinsic.Control.For(v.Local.iCounter,0,v.DataTable.Cost_Hist_Dt.RowCount--,1)
+	
+	v.Local.sSQL.Set("select sum(DOLLARS_ESTIMATED)  ,  sum(DOLLARS_ACTUAL)")
+	f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," from V_JOB_Hist_Ops ",v.Local.sSQL)
+	f.Intrinsic.String.Build(" {0} where job = '{1}' and suffix = '{2}' and LMO != 'Z' ",v.Local.sSQL, Variable.DataTable.Cost_Hist_Dt(v.Local.iCounter).Job!FieldValString,Variable.DataTable.Cost_Hist_Dt(v.Local.iCounter).Suffix!FieldValString,v.Local.sSQL)
+	f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," group by job, suffix ",v.Local.sSQL)
+	f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL, v.Local.sEstimated_Actual)	
+	f.Intrinsic.String.Split(v.Local.sEstimated_Actual,"*!*",v.Local.sEstimated_Actual)
+	f.Intrinsic.Control.If(v.Local.sEstimated_Actual,<>,"")
+		f.Intrinsic.Control.If(v.Local.sEstimated_Actual(0),<>,"",and,v.Local.sEstimated_Actual(1),<>,"")
+			Function.Data.DataTable.SetValue("Cost_Hist_Dt", v.Local.iCounter,"Std_Cost_Before", v.Local.sEstimated_Actual(0))
+			Function.Data.DataTable.SetValue("Cost_Hist_Dt", v.Local.iCounter,"Mfg_Orders_Net_Cost", v.Local.sEstimated_Actual(1))
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.EndIf
+	
+f.Intrinsic.Control.Next(v.Local.iCounter)
+
+v.Local.sMap.Set("job@!@job*!*suffix@!@suffix*!*job_suffix@!@job_suffix*!*Part@!@Part*!*Location@!@Location*!*Std_Cost_Before@!@Std_Cost_Before*!*Mfg_Orders_Net_Cost@!@Mfg_Orders_Net_Cost*!*Units_Produced@!@Units_Produced*!*Units_Order@!@Units_Order")
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_Cost_Hist")
+Function.Data.DataTable.SaveToDB("Cost_Hist_DT", "con", "GCG_4528_Cost_Hist", "",128, v.Local.sMap)
+f.Data.DataTable.Close("Cost_Hist_DT")
+
+'Combine Cost_Active + Cost_Hist
+v.Local.sSQL.Set("Select job, suffix, job_suffix, Part, Location, Units_Produced, Units_Order, Std_Cost_Before, Mfg_Orders_Net_Cost from GCG_4528_Cost_Active union Select job, suffix, job_suffix, Part, Location, Units_Produced, Units_Order, Std_Cost_Before, Mfg_Orders_Net_Cost from GCG_4528_Cost_Hist")
+f.Data.DataTable.CreateFromSQL("Cost_DT","con",v.Local.sSQL,true)
+
+F.Intrinsic.Debug.Stop
+
+'Mfg_Orders_Std_Cost
+Function.Data.DataTable.AddExpressionColumn("Cost_DT", "Mfg_Orders_Std_Cost", "float", "IIF(Units_Order <> 0, (Std_Cost_Before * Units_Produced)/Units_Order, Std_Cost_Before)")
+
+'VARIANCES
+Function.Data.DataTable.AddExpressionColumn("Cost_DT", "Mfg_Orders_Variances", "float", "Mfg_Orders_Net_Cost - Mfg_Orders_Std_Cost")
+
+'CALCULATE Avg_cost  = net / units where units > 0
+Function.Data.DataTable.AddExpressionColumn("Cost_DT", "Avg_Cost", "float", "Mfg_Orders_Net_cost / Units_Produced")
+
+Gui.Progress.Bar.Value(7)
+Gui.Progress.lblStatus.Text("...calculating cost fields")
+'Save to DB
+v.Local.sMap.Set("job@!@job*!*Suffix@!@Suffix*!*Job_Suffix@!@Job_Suffix*!*Part@!@Part*!*Location@!@Location")
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Std_Cost@!@Mfg_Orders_Std_Cost*!*Std_Cost_Before@!@Std_Cost_Before*!*Mfg_Orders_Variances@!@Mfg_Orders_Variances", v.Local.sMap)
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Net_Cost@!@Mfg_Orders_Net_Cost*!*Units_Produced@!@Units_Produced*!*Avg_Cost@!@Avg_Cost*!*Units_Order@!@Units_Order", v.Local.sMap)
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_Cost")
+Function.Data.DataTable.SaveToDB("Cost_DT", "con", "GCG_4528_Cost", "",128, v.Local.sMap)
+f.Data.DataTable.Close("Cost_DT")
+
+v.Local.sSQL.Set("select Part, Location, sum(Mfg_Orders_Std_Cost) as Mfg_Orders_Std_Cost, sum(Mfg_Orders_Variances) as Mfg_Orders_Variances, sum(Mfg_Orders_Net_Cost) as Mfg_Orders_Net_Cost, sum(Units_Produced) as Units_Produced ")
+f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," from GCG_4528_Cost ",v.Local.sSQL)
+f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," group by part, location",v.Local.sSQL)
+
+f.Data.DataTable.CreateFromSQL("Cost_DT","con",v.Local.sSQL,true)
+'
+Gui.Progress.Bar.Value(8)
+Gui.Progress.lblStatus.Text("...calculating summary fields")
+'Save to DB
+'AutoNum@!@AutoNum*!*
+v.Local.sMap.Set("Part@!@Part*!*Location@!@Location")
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Std_Cost@!@Mfg_Orders_Std_Cost*!*Mfg_Orders_Variances@!@Mfg_Orders_Variances", v.Local.sMap)
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Net_Cost@!@Mfg_Orders_Net_Cost*!*Units_Produced@!@Units_Produced", v.Local.sMap)
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_Cost")
+Function.Data.DataTable.SaveToDB("Cost_DT", "con", "GCG_4528_Cost", "",128, v.Local.sMap)
+f.ODBC.Connection!con.Execute("Update GCG_4528_Cost set Avg_Cost = Mfg_Orders_Net_Cost/Units_Produced where Units_Produced != 0")
+f.Data.DataTable.Close("Cost_DT")
+
+'=============================================================================COMBINE GROSS_SALES AND COST Group by Customer left join Part Cost===================================================================================================================
+v.Local.sSQL.Set("Select Customer, Customer_Name, s.Part,s.Location, Description, Sales_Dollars, Sales_Units, Avg_Price, Mfg_Orders_Std_Cost, Mfg_Orders_Variances, Mfg_Orders_Net_Cost, Units_Produced, Avg_Cost")
+f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," from GCG_4528_GrossSales s ",v.Local.sSQL)
+f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," left join GCG_4528_Cost c on s.part = c.part and s.location = c.location",v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("Final_DT","con",v.Local.sSQL,true)
+'
+'Log Report
+F.Global.BI.GetRunID(V.Global.iBIRunID)
+f.Global.BI.GetIDFromName("GCG_4528_ActualGrossMargin_Extension.rpt",True,v.Local.iRptID)
+F.Global.BI.StartLogging(V.Global.iBIRunID,v.Local.iRptID,-1,"",V.Global.iBILogID)
+Function.Data.DataTable.AddColumn("Final_DT", "BIRUNID", "long", Variable.Global.iBIRunID)
+
+'Stop Logging
+F.Global.BI.StopLogging(V.Global.iBILogID)
+V.Local.sVal.Set(V.Global.iBIRunID)
+V.Local.sParam.Set("BIRUNID")
+Gui.Progress.lblStatus.Text("...sending to report")
+Gui.Progress.Bar.Value(9)
+'Save to DB
+v.Local.sMap.Set("BIRUNID@!@BIRUNID*!*Customer@!@Customer*!*Customer_Name@!@Customer_Name*!*Part@!@Part*!*Location@!@Location*!*DESCRIPTION@!@DESCRIPTION")
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Sales_Dollars@!@Sales_Dollars*!*Sales_Units@!@Sales_Units*!*Avg_Price@!@Avg_Price",V.Local.sMap)
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Std_Cost@!@Mfg_Orders_Std_Cost*!*Mfg_Orders_Variances@!@Mfg_Orders_Variances", v.Local.sMap)
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Net_Cost@!@Mfg_Orders_Net_Cost*!*Units_Produced@!@Units_Produced*!*Avg_Cost@!@Avg_Cost", v.Local.sMap)
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_GrossMargin")
+Function.Data.DataTable.SaveToDB("Final_DT", "con", "GCG_4528_GrossMargin", "",128, v.Local.sMap)
+f.Data.DataTable.Close("Final_DT")
+
+'Process the Parts that do not have WO
+v.Local.sList.Declare(string)
+v.Local.sPartResult.Declare(string)
+v.Local.fStdCostPerUnit.Declare(float)
+v.Local.fHold.Declare(float)
+v.Local.fSU.Declare(float)
+
+F.Intrinsic.String.Build("Update GCG_4528_GrossMargin set  InvBegDate = '{0}', InvEndDate = '{1}', WOBegDate = '{2}', WOEndDate = '{3}'",V.Global.sBegDate,V.Global.sEndDate,V.Global.sWOBegDate,V.Global.sWOEndDate,V.Local.sSQL)
+f.ODBC.Connection!con.Execute(V.Local.sSQL)
+f.ODBC.Connection!con.Execute("Update GCG_4528_GrossMargin set Avg_Margin = (Avg_Price - Avg_Cost)")
+f.ODBC.Connection!con.Execute("Update GCG_4528_GrossMargin set Margin_Percent = ((Avg_Price - Avg_Cost) /Avg_Price)*100 where Avg_Price != 0 and Avg_Cost is not null and Avg_Price is not null")
+f.Intrinsic.String.Build("Update GCG_4528_GrossMargin set Out_Of_Range = 'B' where part in ({0})",v.Global.sPartOutOfRangeBefore,v.Local.sSQL)
+f.ODBC.Connection!con.Execute(V.Local.sSQL)
+f.Intrinsic.String.Build("Update GCG_4528_GrossMargin set Out_Of_Range = 'A' where part in ({0})",v.Global.sPartOutOfRangeAfter,v.Local.sSQL)
+f.ODBC.Connection!con.Execute(V.Local.sSQL)
+f.Intrinsic.String.Build("Update GCG_4528_GrossMargin set Out_Of_Range = 'H' where part in ({0})",v.Local.sPartHistRange,v.Local.sSQL)
+f.ODBC.Connection!con.Execute(V.Local.sSQL)
+
+'=============================================================================COMBINE GROSS_SALES AND COST Group by Part left join Part cost===================================================================================================================
+v.Local.sSQL.Set("Select s.Part,s.Location, Description, Sales_Dollars, Sales_Units, Avg_Price, Mfg_Orders_Std_Cost, Mfg_Orders_Variances, Mfg_Orders_Net_Cost, Units_Produced, Avg_Cost")
+f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," from GCG_4528_SalesByPart s ",v.Local.sSQL)
+f.Intrinsic.String.Build(" {0} {1}",v.Local.sSQL," left join GCG_4528_Cost c on s.part = c.part and s.location = c.location",v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("Final_DT","con",v.Local.sSQL,true)
+'
+Gui.Progress.Bar.Value(10)
+Gui.Progress.lblStatus.Text("...printing report")
+'Save to DB
+'AutoNum@!@AutoNum*!*
+v.Local.sMap.Set("Part@!@Part*!*Location@!@Location*!*DESCRIPTION@!@DESCRIPTION")
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Sales_Dollars@!@Sales_Dollars*!*Sales_Units@!@Sales_Units*!*Avg_Price@!@Avg_Price",V.Local.sMap)
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Std_Cost@!@Mfg_Orders_Std_Cost*!*Mfg_Orders_Variances@!@Mfg_Orders_Variances", v.Local.sMap)
+f.Intrinsic.String.Build("{0}{1}",v.Local.sMap,"*!*Mfg_Orders_Net_Cost@!@Mfg_Orders_Net_Cost*!*Units_Produced@!@Units_Produced*!*Avg_Cost@!@Avg_Cost", v.Local.sMap)
+f.ODBC.Connection!con.Execute("Delete from GCG_4528_SummaryPart")
+Function.Data.DataTable.SaveToDB("Final_DT", "con", "GCG_4528_SummaryPart", "",128, v.Local.sMap)
+f.Data.DataTable.Close("Final_DT")
+
+f.Intrinsic.String.Build("Update GCG_4528_SummaryPart set Out_Of_Range = 'B' where part in ({0})",v.Global.sPartOutOfRangeBefore,v.Local.sSQL)
+f.ODBC.Connection!con.Execute(v.Local.sSQL)
+f.Intrinsic.String.Build("Update GCG_4528_SummaryPart set Out_Of_Range = 'A' where part in ({0})",v.Global.sPartOutOfRangeAfter,v.Local.sSQL)
+f.ODBC.Connection!con.Execute(v.Local.sSQL)
+f.Intrinsic.String.Build("Update GCG_4528_SummaryPart set Out_Of_Range = 'H' where part in ({0})",v.Local.sPartHistRange,v.Local.sSQL)
+f.ODBC.Connection!con.Execute(v.Local.sSQL)
+gui.Progress..Visible(False)
+
+''Print the Report
+F.Global.BI.RunReportPreProcessor(V.Global.iBIRunID,V.Global.iBILogID,V.Local.sParam,V.Local.sVal,"",-1,True,"",-1,"",-1,"","",V.Global.iBIRunID)
+Function.ODBC.Connection!con.Close
+f.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Pre_Proc_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4528_GrossMargin.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Pre_Proc.End
+
+Program.Sub.Form_UnLoad.Start
+f.Intrinsic.Control.End
+
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.chkSameRange_Click.Start
+f.Intrinsic.Control.If(v.Screen.Form!chkSameRange.Value,=,1)
+	gui.Form.dtpWOBegDate.Enabled(False)
+	gui.Form.dtpWOEndDate.Enabled(False)
+f.Intrinsic.Control.Else
+	gui.Form.dtpWOBegDate.Enabled(True)
+	gui.Form.dtpWOEndDate.Enabled(True)
+f.Intrinsic.Control.Endif
+Program.Sub.chkSameRange_Click.End
+
+Program.Sub.Form2_UnLoad.Start
+f.ODBC.Connection!con.Close
+f.Intrinsic.Control.End
+
+Program.Sub.Form2_UnLoad.End
+
+Program.Sub.Progress_UnLoad.Start
+F.Intrinsic.Control.End
+
+Program.Sub.Progress_UnLoad.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$2/7/2017 1:36:21 PM$}$False
+${$3$}$0$}$$}$-1$}$-1$}$$}$1/1/1900$}$This project was created for Kosmo Machine, Inc. on June of 2016.
+
+
+This is a custom GAB script that will display custom work order detail information. The information will be identical to the data from the work order detail grid in the standard GSS system however the user will not have the ability to browse via the ?Amount? column.
+The purpose of this is the customer has quoters/planners that would like to see this specific information and cannot do so with the Work Order (No Dollars) or WO Detail standard report.
+This GAB script is to run from the Work Order header screen. The script will check to see if the user is a part of the WODET security group. If they are not the ?Details? button will be disabled and the ?Script 1? button will be activated with the custom GAB script.
+Customer will need to set up the WODET security group prior to installation. Customer is responsible for setting up security for the standard work order screens if certain users are not to access it.
+
+**Note: Given the information on the custom grid, just as with the standard WO detail screen, given certain parameters pay for Labor may be calculated by users.
+Program.Sub.Comments.End
